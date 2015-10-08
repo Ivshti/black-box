@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+canvas, #mirror { position: absolute; top: 0px; bottom: 0px; }
+</style>
+<script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+<script src="http://webglfundamentals.org/webgl/resources/webgl-utils.js"></script>
+<script>
+"use strict";
+
+window.onload = main;
+
+function main() {
+  var canvas = document.getElementById("canvas"), mir = document.getElementById("mirror");
+
+  var image = new Image();
+  image.src = "./ELENA.jpg";  // MUST BE SAME DOMAIN!!!
+  image.onload = function() {
+    canvas.width = image.width; canvas.height = image.height;
+    mir.width = image.width; mir.height = image.height;
+    render(image);
+  }
+  image.onerror = function(err) {
+    console.log(err)
+  }
+}
+
+
+function render(image) {
+  var canvas = document.getElementById("canvas"), mir = document.getElementById("mirror");
+
+  // Get A WebGL context
+  mir.addEventListener('contextmenu', function (e) {
+      var dataURL = canvas.toDataURL('image/jpeg');
+      mir.src = dataURL;
+  });
+  var gl = canvas.getContext("webgl", { preserveDrawingBuffer: true });
+  if (!gl) {
+    return;
+  }
+
+  // setup GLSL program
+  var program = createProgramFromScripts(gl, ["2d-vertex-shader", 
+    // "2d-fragment-shader",
+    //"glitch-shader"
+  //  "recurse-shader"
+   "amazing-shader"
+  ]);
+  gl.useProgram(program);
+
+  // look up where the vertex data needs to go.
+  var positionLocation = gl.getAttribLocation(program, "a_position");
+  var texCoordLocation = gl.getAttribLocation(program, "a_texCoord");
+  
+  var l2 = gl.getUniformLocation( program, "iGlobalTime");
+  var start = Date.now();
+  gl.uniform1f(l2, ((Date.now()-start)/1000).toFixed(1) );
+
+  // provide texture coordinates for the rectangle.
+  var texCoordBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      0.0,  0.0,
+      1.0,  0.0,
+      0.0,  1.0,
+      0.0,  1.0,
+      1.0,  0.0,
+      1.0,  1.0]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(texCoordLocation);
+  gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+
+  var texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+
+  // Set the parameters so we can render any size image.
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+  // Upload the image into the texture.
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+
+  // lookup uniforms
+  var resolutionLocation = gl.getUniformLocation(program, "u_resolution");
+
+  // set the resolution
+  gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
+
+  // Create a buffer for the position of the rectangle corners.
+  var positionBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.enableVertexAttribArray(positionLocation);
+  gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+  // Set a rectangle the same size as the image.
+  setRectangle(gl, 0, 0, image.width, image.height);
+
+  var coo = 0;
+  $(window).mousemove(function(e) {
+    coo = e.pageX + e.pageY;
+  });
+  // Draw the rectangle.
+  setInterval(function() { 
+    gl.uniform1f(l2, (coo)/($(document).width() + $(document).height()) * 10);
+    //gl.uniform1f(l2, (( Date.now()-start)/ (1000) ).toFixed(2) );
+    
+    //gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+    //setRectangle(gl, 0, 0, image.width, image.height);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }, 60);
+}
+
+function randomInt(range) {
+  return Math.floor(Math.random() * range);
+}
+
+function setRectangle(gl, x, y, width, height) {
+  var x1 = x;
+  var x2 = x + width;
+  var y1 = y;
+  var y2 = y + height;
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+     x1, y1,
+     x2, y1,
+     x1, y2,
+     x1, y2,
+     x2, y1,
+     x2, y2]), gl.STATIC_DRAW);
+}
+
+</script>
+<!-- vertex shader -->
+<script id="2d-vertex-shader" type="x-shader/x-vertex">
+attribute vec2 a_position;
+attribute vec2 a_texCoord;
+
+uniform vec2 u_resolution;
+
+varying vec2 v_texCoord;
+
+void main() {
+   // convert the rectangle from pixels to 0.0 to 1.0
+   vec2 zeroToOne = a_position / u_resolution;
+
+   // convert from 0->1 to 0->2
+   vec2 zeroToTwo = zeroToOne * 2.0;
+
+   // convert from 0->2 to -1->+1 (clipspace)
+   vec2 clipSpace = zeroToTwo - 1.0;
+
+   gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+   // pass the texCoord to the fragment shader
+   // The GPU will interpolate this value between points.
+   v_texCoord = a_texCoord;
+}
+</script>
+
+
+
+
+<!-- fragment shader -->
+<script id="2d-fragment-shader" type="x-shader/x-fragment">
+precision mediump float;
+
+// our texture
+uniform sampler2D u_image;
+
+// the texCoords passed in from the vertex shader.
+varying vec2 v_texCoord;
+
+uniform float iGlobalTime;
+
+float rand(vec2 co)
+{
+  return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
+}
+void main() {
+   // R, G, B
+   //gl_FragColor = vec4( texture2D(u_image, v_texCoord).x, texture2D(u_image, v_texCoord).y, texture2D(u_image, v_texCoord).z, 1);
+   //gl_FragColor = texture2D(u_image, v_texCoord).bgra;
+  //gl_FragColor = vec4( texture2D(u_image, v_texCoord).x, texture2D(u_image, v_texCoord).y, texture2D(u_image, v_texCoord).z, 1);
+
+  // ELENA LIKES
+  //gl_FragColor = vec4( texture2D(u_image, v_texCoord).y, texture2D(u_image, v_texCoord).x, 1.0-texture2D(u_image, v_texCoord).z, 1);
+
+  // IVO & ELENA LIKES
+  //gl_FragColor = vec4( 1.0-texture2D(u_image, v_texCoord).y, 1.0-texture2D(u_image, v_texCoord).x, 1.0-texture2D(u_image, v_texCoord).z, 1);
+
+  // IVO & ELENA like
+  gl_FragColor = vec4( 1.0-texture2D(u_image, v_texCoord).z, 1.0-texture2D(u_image, v_texCoord).y, 1.0-texture2D(u_image, v_texCoord).x, 1);
+
+  // IVO & ELENA - awesome for tumblr; WARNING: to get that effect, we have to use rand instead of iGlobalTime
+  //gl_FragColor = vec4( (rand(vec2(iGlobalTime)*1.0)-texture2D(u_image, v_texCoord).z, 1.0-texture2D(u_image, v_texCoord).y, 1.0-texture2D(u_image, v_texCoord).x, 1); 
+}
+</script>
+
+<script id="glitch-shader" type="x-shader/x-fragment">
+precision mediump float;
+
+// our texture
+uniform sampler2D u_image;
+vec2 a_position;
+vec2 u_resolution;
+
+// the texCoords passed in from the vertex shader.
+varying vec2 v_texCoord;
+
+uniform float iGlobalTime;
+
+float rand(vec2 co)
+{
+  return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+void main( )
+{
+  vec2 uv =  v_texCoord;
+
+    
+    // Sideways distortion
+  if (mod(iGlobalTime, 2.0) > 1.0)
+    uv.x += cos(iGlobalTime * 10.0 + uv.y * 1000.0) * 0.01;
+    
+    // Squares on the entire image
+    //if (mod(iGlobalTime, 4.0) > 3.9)
+  //  uv = floor(uv * 32.0) / 32.0;
+    
+    // Squares at some places
+  if (mod(iGlobalTime, 5.0) > 2.0)
+      uv += 1.0 / 64.0 * (2.0 * vec2(rand(floor(uv * 32.0) + vec2(32.05,236.0)), rand(floor(uv.y * 32.0) + vec2(-62.05,-36.0))) - 1.0);
+
+  gl_FragColor = texture2D(u_image, uv);
+    
+    // Flickers - random
+    if (rand(vec2(iGlobalTime)) > 0.90)
+    gl_FragColor = vec4(dot(gl_FragColor.rgb, vec3(0.25, 0.5, 0.25)));
+    
+    // Noise
+    gl_FragColor.rgb += 0.25 * vec3(rand(iGlobalTime + gl_FragCoord.xy / vec2(-213, 5.53)), rand(iGlobalTime - gl_FragCoord.xy / vec2(213, -5.53)), rand(iGlobalTime + gl_FragCoord.xy / vec2(213, 5.53))) - 0.125;
+
+
+}
+</script>
+
+<script id="recurse-shader" type="x-shader/x-fragment">
+precision mediump float;
+
+uniform sampler2D u_image;
+
+// the texCoords passed in from the vertex shader.
+varying vec2 v_texCoord;
+
+float rand(vec2 co)
+{
+  return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+uniform float iGlobalTime;
+void main() {
+    vec2 uv =  v_texCoord;
+
+    float t = iGlobalTime;
+    float x = gl_FragCoord.x, y = gl_FragCoord.y;
+    //uv.y += sin(t * 2.0 + x / rand(vec2(iGlobalTime))*10000.0) * 0.01; // ИСКА!!!
+    //uv.y += sin(t * 2.0 + x / 50.0) * 0.01;
+    uv.y += sin(t * 2.0 + x / 50.0) * 0.01*mod(rand(vec2(iGlobalTime)), 1.0); // ИСКА!!
+    vec4 p = texture2D(u_image, uv);
+    gl_FragColor = vec4( 1.0-texture2D(u_image, uv).z, 1.0-texture2D(u_image, uv).y, 1.0-texture2D(u_image, uv).x, 1);
+    //gl_FragColor = p;
+}
+</script>
+
+<script id="amazing-shader" type="x-shader/x-fragment">
+precision mediump float;
+
+float rand(vec2 co)
+{
+  return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
+}
+uniform sampler2D u_image;
+
+// the texCoords passed in from the vertex shader.
+varying vec2 v_texCoord;
+
+uniform float iGlobalTime;
+void main() {
+    vec2 uv = v_texCoord;
+    uv.x = 1.0 - uv.x;
+    
+    vec3 col = texture2D(u_image,uv).xyz;
+    vec3 greyMul = vec3(0.2989, 0.5870, 0.1140);
+    vec3 greyCol = col * greyMul;
+    float grey = greyCol.x + greyCol.y + greyCol.z;
+    float threshold = 0.5 + 0.5 * sin(iGlobalTime * 2.0);
+    // true || 
+    if ( grey > threshold - 0.2 && grey < threshold + 0.2 )
+    {
+        float u = mod(uv.x * 4.0, 1.0);
+        //float v = mod(uv.y * 4.0+rand(vec2(iGlobalTime))*4.0, 1.0);
+        float v = mod(uv.y * 4.0, 1.0);
+        col = texture2D(u_image,vec2(u,v)).xyz * vec3(uv,0.5+0.5*sin(iGlobalTime * 4.0));
+    }
+        
+    gl_FragColor = vec4(col,1.0);
+}
+
+
+</script>
+
+
+<script id="amazing-shader-2" type="x-shader/x-fragment">
+precision mediump float;
+
+float rand(vec2 co)
+{
+  return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
+}
+uniform sampler2D u_image;
+
+// the texCoords passed in from the vertex shader.
+varying vec2 v_texCoord;
+
+uniform float iGlobalTime;
+void main() {
+    vec2 uv = v_texCoord;
+    uv.x = 1.0 - uv.x;
+    
+    vec3 col = texture2D(u_image,uv).xyz;
+    vec3 greyMul = vec3(0.2989, 0.5870, 0.1140);
+    vec3 greyCol = col * greyMul;
+    float grey = greyCol.x + greyCol.y + greyCol.z;
+    float threshold = 0.5 + 0.5 * sin(iGlobalTime * 2.0);
+    // true || 
+    if ( grey > threshold - 0.2 && grey < threshold + 0.2 )
+    {
+        float u = mod(uv.x * 4.0, 1.0);
+        //float v = mod(uv.y * 4.0+rand(vec2(iGlobalTime))*4.0, 1.0);
+        float v = mod(uv.y * 4.0, 1.0);
+        col = texture2D(u_image,vec2(u,v)).xyz * vec3(uv,0.5+0.5*sin(iGlobalTime * 4.0));
+    }
+        
+    gl_FragColor = vec4(col,1.0);
+}
+</script>
+
+<body>
+<canvas id="canvas"></canvas>
+<img id="mirror">
+</body></html>
